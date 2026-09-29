@@ -4,9 +4,10 @@ import base64
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from huggingface_hub import InferenceClient
+from deep_translator import GoogleTranslator
 
 app = Flask(__name__)
-# সব ডোমেইন থেকে রিকোয়েস্ট অ্যালাও করার জন্য CORS কনফিগারেশন
+# সব ডোমেইন থেকে রিকোয়েস্ট অ্যালাও করার কনফিগারেশন
 CORS(app, resources={r"/*": {"origins": "*"}})
 
 # Render-এর Environment Variable থেকে সুরক্ষিতভাবে টোকেন নেওয়া
@@ -29,9 +30,19 @@ def generate():
         if not user_prompt:
             return jsonify({"success": False, "error": "প্রম্পট খালি রাখা যাবে না"}), 400
 
+        # বাংলা, হিন্দি, আরবি বা যেকোনো ভাষা স্বয়ংক্রিয়ভাবে ডিটেক্ট করে ইংরেজিতে অনুবাদ
+        try:
+            english_prompt = GoogleTranslator(source='auto', target='en').translate(user_prompt)
+        except Exception as trans_err:
+            print(f"Translation Error: {trans_err}")
+            english_prompt = user_prompt
+
+        # ছবির কোয়ালিটি বাড়াতে আল্ট্রা-ডিটেইলড কি-ওয়ার্ড যুক্ত করা
+        enhanced_prompt = f"{english_prompt}, cinematic, photorealistic, sharp focus, 8k resolution"
+
         # FLUX.1-schnell মডেল দিয়ে ইমেজ তৈরি
         image = client.text_to_image(
-            prompt=user_prompt,
+            prompt=enhanced_prompt,
             model="black-forest-labs/FLUX.1-schnell"
         )
 
