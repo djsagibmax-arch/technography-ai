@@ -1,18 +1,36 @@
 import os
 import io
 import base64
+import urllib.parse
+import urllib.request
+import json
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from huggingface_hub import InferenceClient
-from deep_translator import GoogleTranslator
 
 app = Flask(__name__)
-# সব ডোমেইন থেকে রিকোয়েস্ট অ্যালাও করার কনফিগারেশন
 CORS(app, resources={r"/*": {"origins": "*"}})
 
-# Render-এর Environment Variable থেকে সুরক্ষিতভাবে টোকেন নেওয়া
+# Render-এর Environment Variable থেকে টোকেন নেওয়া
 HF_TOKEN = os.environ.get("HF_TOKEN")
 client = InferenceClient(api_key=HF_TOKEN)
+
+def translate_to_english(text):
+    """বাংলা, হিন্দি, আরবি ইত্যাদি যেকোনো ভাষা স্বয়ংক্রিয়ভাবে ইংরেজিতে রূপান্তর করে"""
+    try:
+        encoded_text = urllib.parse.quote(text)
+        url = f"https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=en&dt=t&q={encoded_text}"
+        req = urllib.request.Request(
+            url, 
+            headers={'User-Agent': 'Mozilla/5.0'}
+        )
+        with urllib.request.urlopen(req, timeout=5) as response:
+            result = json.loads(response.read().decode('utf-8'))
+            translated = "".join([part[0] for part in result[0] if part[0]])
+            return translated
+    except Exception as e:
+        print(f"Translation Error: {e}")
+        return text
 
 @app.route("/")
 def home():
@@ -30,23 +48,20 @@ def generate():
         if not user_prompt:
             return jsonify({"success": False, "error": "প্রম্পট খালি রাখা যাবে না"}), 400
 
-        # বাংলা, হিন্দি, আরবি বা যেকোনো ভাষা স্বয়ংক্রিয়ভাবে ডিটেক্ট করে ইংরেজিতে অনুবাদ
-        try:
-            english_prompt = GoogleTranslator(source='auto', target='en').translate(user_prompt)
-        except Exception as trans_err:
-            print(f"Translation Error: {trans_err}")
-            english_prompt = user_prompt
+        # যেকোনো ভাষা থেকে নির্ভরযোগ্য ইংরেজি অনুবাদ
+        english_prompt = translate_to_english(user_prompt)
+        print(f"Original: {user_prompt} | Translated: {english_prompt}")
 
-        # ছবির কোয়ালিটি বাড়াতে আল্ট্রা-ডিটেইলড কি-ওয়ার্ড যুক্ত করা
+        # প্রম্পট এনহ্যান্সমেন্ট
         enhanced_prompt = f"{english_prompt}, cinematic, photorealistic, sharp focus, 8k resolution"
 
-        # FLUX.1-schnell মডেল দিয়ে ইমেজ তৈরি
+        # FLUX.1-schnell মডেল কল
         image = client.text_to_image(
             prompt=enhanced_prompt,
             model="black-forest-labs/FLUX.1-schnell"
         )
 
-        # ইমেজকে মেমোরি বাফারে নিয়ে Base64 এ কনভার্ট
+        # Base64 এ কনভার্ট
         buffer = io.BytesIO()
         image.save(buffer, format="JPEG", quality=90)
         img_b64 = base64.b64encode(buffer.getvalue()).decode("utf-8")
