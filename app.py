@@ -4,6 +4,7 @@ import base64
 import urllib.parse
 import urllib.request
 import json
+import random
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 from huggingface_hub import InferenceClient
@@ -11,23 +12,19 @@ from huggingface_hub import InferenceClient
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "*"}})
 
-# Render-এর Environment Variable থেকে টোকেন নেওয়া
+# Render Environment Variable থেকে টোকেন
 HF_TOKEN = os.environ.get("HF_TOKEN")
 client = InferenceClient(api_key=HF_TOKEN)
 
 def translate_to_english(text):
-    """বাংলা, হিন্দি, আরবি ইত্যাদি যেকোনো ভাষা স্বয়ংক্রিয়ভাবে ইংরেজিতে রূপান্তর করে"""
+    """বাংলা, হিন্দি ইত্যাদি যেকোনো ভাষা থেকে ইংরেজিতে অনুবাদ"""
     try:
         encoded_text = urllib.parse.quote(text)
         url = f"https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=en&dt=t&q={encoded_text}"
-        req = urllib.request.Request(
-            url, 
-            headers={'User-Agent': 'Mozilla/5.0'}
-        )
+        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0'})
         with urllib.request.urlopen(req, timeout=5) as response:
             result = json.loads(response.read().decode('utf-8'))
-            translated = "".join([part[0] for part in result[0] if part[0]])
-            return translated
+            return "".join([part[0] for part in result[0] if part[0]])
     except Exception as e:
         print(f"Translation Error: {e}")
         return text
@@ -44,31 +41,37 @@ def generate():
     try:
         data = request.get_json(force=True, silent=True) or {}
         user_prompt = data.get("prompt", "").strip()
+        # আগের ছবির সাথে মিল রাখার জন্য seed হ্যান্ডলিং
+        seed = data.get("seed")
+        if seed is None:
+            seed = random.randint(1, 999999999)
+        else:
+            seed = int(seed)
 
         if not user_prompt:
             return jsonify({"success": False, "error": "প্রম্পট খালি রাখা যাবে না"}), 400
 
-        # যেকোনো ভাষা থেকে নির্ভরযোগ্য ইংরেজি অনুবাদ
+        # অনুবাদ করা
         english_prompt = translate_to_english(user_prompt)
-        print(f"Original: {user_prompt} | Translated: {english_prompt}")
 
-        # প্রম্পট এনহ্যান্সমেন্ট
+        # ছবির নিখুঁত রূপ ও ধারাবাহিকতা বজায় রাখতে প্রম্পট সাজানো
         enhanced_prompt = f"{english_prompt}, cinematic, photorealistic, sharp focus, 8k resolution"
 
-        # FLUX.1-schnell মডেল কল
+        # FLUX.1-schnell মডেলে seed পাস করে ইমেজ তৈরি
         image = client.text_to_image(
             prompt=enhanced_prompt,
-            model="black-forest-labs/FLUX.1-schnell"
+            model="black-forest-labs/FLUX.1-schnell",
+            seed=seed
         )
 
-        # Base64 এ কনভার্ট
         buffer = io.BytesIO()
         image.save(buffer, format="JPEG", quality=90)
         img_b64 = base64.b64encode(buffer.getvalue()).decode("utf-8")
 
         return jsonify({
             "success": True,
-            "image": f"data:image/jpeg;base64,{img_b64}"
+            "image": f"data:image/jpeg;base64,{img_b64}",
+            "seed": seed
         })
 
     except Exception as e:
