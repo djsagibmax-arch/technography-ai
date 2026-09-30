@@ -12,10 +12,10 @@ from huggingface_hub import InferenceClient
 from PIL import Image
 
 app = Flask(__name__)
-# ওয়েবসাইট থেকে যাতে কোনো কল ব্লক না হয়
 CORS(app, resources={r"/*": {"origins": "*"}})
 
 HF_TOKEN = os.environ.get("HF_TOKEN")
+# অফিসিয়াল ক্লায়েন্ট ইনস্ট্যান্স
 client = InferenceClient(api_key=HF_TOKEN)
 
 def translate_to_english(text):
@@ -80,7 +80,7 @@ def generate():
 
 # ==========================================
 # ২. এআই ব্যাকগ্রাউন্ড রিমুভার (/remove-bg)
-# (র‍্যাম খরচ না করেই দ্রুতগতিতে চলবে)
+# (InferenceClient দিয়ে পরিচালিত - কোনো DNS বা মেমোরি সমস্যা হবে না)
 # ==========================================
 @app.route("/remove-bg", methods=["POST", "OPTIONS"])
 def remove_bg():
@@ -95,25 +95,24 @@ def remove_bg():
         if file.filename == "":
             return jsonify({"success": False, "error": "ফাইল নির্বাচন করা হয়নি"}), 400
 
-        image_bytes = file.read()
+        # ইমেজ ওপেন ও আরজিবি মোড নিশ্চিত করা
+        input_image = Image.open(file.stream).convert("RGB")
 
-        # Hugging Face-এর ক্লাউড RMBG মডেল কল করা
-        api_url = "https://api-inference.huggingface.co/models/briaai/RMBG-1.4"
-        headers = {"Authorization": f"Bearer {HF_TOKEN}"} if HF_TOKEN else {}
+        # অফিসিয়াল InferenceClient দিয়ে ক্লাউড প্রসেস
+        result_img = client.image_to_image(
+            image=input_image,
+            model="briaai/RMBG-1.4"
+        )
 
-        response = requests.post(api_url, headers=headers, data=image_bytes, timeout=40)
+        buffer = io.BytesIO()
+        result_img.save(buffer, format="PNG")
+        buffer.seek(0)
 
-        if response.status_code == 200:
-            return send_file(
-                io.BytesIO(response.content),
-                mimetype="image/png",
-                as_attachment=False
-            )
-        else:
-            return jsonify({
-                "success": False, 
-                "error": f"AI মডেল রেসপন্স দেয়নি (কোড {response.status_code})"
-            }), 500
+        return send_file(
+            buffer,
+            mimetype="image/png",
+            as_attachment=False
+        )
 
     except Exception as e:
         print(f"BG Remover Error: {str(e)}")
