@@ -7,11 +7,12 @@ import json
 import random
 import requests
 from flask import Flask, request, jsonify, send_file
-from flask-cors import CORS
+from flask_cors import CORS
 from huggingface_hub import InferenceClient
 from PIL import Image
 
 app = Flask(__name__)
+# ওয়েবসাইট থেকে যাতে কোনো কল ব্লক না হয়
 CORS(app, resources={r"/*": {"origins": "*"}})
 
 HF_TOKEN = os.environ.get("HF_TOKEN")
@@ -79,7 +80,7 @@ def generate():
 
 # ==========================================
 # ২. এআই ব্যাকগ্রাউন্ড রিমুভার (/remove-bg)
-# (Zero-RAM ক্লাউড ইঞ্জিন - Render ক্র্যাশ করবে না)
+# (র‍্যাম খরচ না করেই দ্রুতগতিতে চলবে)
 # ==========================================
 @app.route("/remove-bg", methods=["POST", "OPTIONS"])
 def remove_bg():
@@ -96,7 +97,7 @@ def remove_bg():
 
         image_bytes = file.read()
 
-        # Hugging Face-এর ক্লাউড RMBG মডেল কল করা হচ্ছে
+        # Hugging Face-এর ক্লাউড RMBG মডেল কল করা
         api_url = "https://api-inference.huggingface.co/models/briaai/RMBG-1.4"
         headers = {"Authorization": f"Bearer {HF_TOKEN}"} if HF_TOKEN else {}
 
