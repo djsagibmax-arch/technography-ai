@@ -9,13 +9,12 @@ import requests
 from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
 from huggingface_hub import InferenceClient
-from PIL import Image
+from PIL import Image, ImageOps
 
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "*"}})
 
 HF_TOKEN = os.environ.get("HF_TOKEN")
-# অফিসিয়াল ক্লায়েন্ট ইনস্ট্যান্স
 client = InferenceClient(api_key=HF_TOKEN)
 
 def translate_to_english(text):
@@ -80,7 +79,7 @@ def generate():
 
 # ==========================================
 # ২. এআই ব্যাকগ্রাউন্ড রিমুভার (/remove-bg)
-# (InferenceClient দিয়ে পরিচালিত - কোনো DNS বা মেমোরি সমস্যা হবে না)
+# (সরাসরি ক্লাউড মাস্কিং - ৫১২MB র‍্যামের ভেতর চলবে)
 # ==========================================
 @app.route("/remove-bg", methods=["POST", "OPTIONS"])
 def remove_bg():
@@ -95,21 +94,46 @@ def remove_bg():
         if file.filename == "":
             return jsonify({"success": False, "error": "ফাইল নির্বাচন করা হয়নি"}), 400
 
-        # ইমেজ ওপেন ও আরজিবি মোড নিশ্চিত করা
-        input_image = Image.open(file.stream).convert("RGB")
+        # ইনপুট ছবি লোড
+        orig_image = Image.open(file.stream).convert("RGBA")
+        
+        # ছবির সাইজ সামঞ্জস্য করা (যাতে প্রসেসিং ফাস্ট হয়)
+        orig_image.thumbnail((1200, 1200))
+        
+        rgb_image = orig_image.convert("RGB")
+        img_byte_arr = io.BytesIO()
+        rgb_image.save(img_byte_arr, format='JPEG', quality=95)
+        raw_bytes = img_byte_arr.getvalue()
 
-        # অফিসিয়াল InferenceClient দিয়ে ক্লাউড প্রসেস
-        result_img = client.image_to_image(
-            image=input_image,
-            model="briaai/RMBG-1.4"
-        )
+        # Hugging Face রাউটারে সরাসরি কল
+        api_url = "https://router.huggingface.co/hf-inference/models/briaai/RMBG-1.4"
+        headers = {
+            "Authorization": f"Bearer {HF_TOKEN}",
+            "Content-Type": "image/jpeg"
+        }
 
-        buffer = io.BytesIO()
-        result_img.save(buffer, format="PNG")
-        buffer.seek(0)
+        resp = requests.post(api_url, headers=headers, data=raw_bytes, timeout=45)
+
+        if resp.status_code != 200:
+            return jsonify({
+                "success": False, 
+                "error": f"HF API Error ({resp.status_code}): {resp.text[:100]}"
+            }), 500
+
+        # প্রাপ্ত মাস্ক দিয়ে মূল ছবির আলফা চ্যানেল আলাদা করা
+        mask = Image.open(io.BytesIO(resp.content)).convert("L")
+        mask = mask.resize(orig_image.size)
+        
+        # ট্রান্সপারেন্ট ছবি তৈরি
+        final_image = orig_image.copy()
+        final_image.putalpha(mask)
+
+        out_buffer = io.BytesIO()
+        final_image.save(out_buffer, format="PNG")
+        out_buffer.seek(0)
 
         return send_file(
-            buffer,
+            out_buffer,
             mimetype="image/png",
             as_attachment=False
         )
