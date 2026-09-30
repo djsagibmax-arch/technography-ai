@@ -5,9 +5,11 @@ import urllib.parse
 import urllib.request
 import json
 import random
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
 from huggingface_hub import InferenceClient
+from rembg import remove
+from PIL import Image
 
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "*"}})
@@ -31,8 +33,11 @@ def translate_to_english(text):
 
 @app.route("/")
 def home():
-    return jsonify({"status": "Technography AI Engine Live on Render!"})
+    return jsonify({"status": "Technography AI Image & BG Remover Engine Live on Render!"})
 
+# ==========================================
+# ১. এআই ইমেজ জেনারেটর (পূর্বের ফ্লাক্স মডেল)
+# ==========================================
 @app.route("/generate", methods=["POST", "OPTIONS"])
 def generate():
     if request.method == "OPTIONS":
@@ -41,7 +46,6 @@ def generate():
     try:
         data = request.get_json(force=True, silent=True) or {}
         user_prompt = data.get("prompt", "").strip()
-        # আগের ছবির সাথে মিল রাখার জন্য seed হ্যান্ডলিং
         seed = data.get("seed")
         if seed is None:
             seed = random.randint(1, 999999999)
@@ -77,6 +81,38 @@ def generate():
     except Exception as e:
         print(f"Error occurred: {str(e)}")
         return jsonify({"success": False, "error": str(e)}), 500
+
+# ==========================================
+# ২. এআই ব্যাকগ্রাউন্ড রিমুভার (নতুন যুক্ত)
+# ==========================================
+@app.route("/remove-bg", methods=["POST", "OPTIONS"])
+def remove_bg():
+    if request.method == "OPTIONS":
+        return jsonify({"status": "ok"}), 200
+
+    try:
+        if "file" not in request.files:
+            return jsonify({"success": False, "error": "কোনো ফাইল পাওয়া যায়নি"}), 400
+
+        file = request.files["file"]
+        if file.filename == "":
+            return jsonify({"success": False, "error": "কোনো ফাইল নির্বাচন করা হয়নি"}), 400
+
+        input_bytes = file.read()
+
+        # rembg দিয়ে ব্যাকগ্রাউন্ড মুছে ফেলা
+        output_bytes = remove(input_bytes)
+
+        # স্বচ্ছ PNG ছবি সরাসরি রিটার্ন করা
+        return send_file(
+            io.BytesIO(output_bytes),
+            mimetype="image/png",
+            as_attachment=False
+        )
+
+    except Exception as e:
+        print(f"BG Remover Error: {str(e)}")
+        return jsonify({"success": False, "error": f"প্রসেসিং ত্রুটি: {str(e)}"}), 500
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
