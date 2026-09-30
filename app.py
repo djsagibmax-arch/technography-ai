@@ -5,22 +5,20 @@ import urllib.parse
 import urllib.request
 import json
 import random
+import requests
 from flask import Flask, request, jsonify, send_file
-from flask_cors import CORS
+from flask-cors import CORS
 from huggingface_hub import InferenceClient
-from rembg import remove
 from PIL import Image
 
 app = Flask(__name__)
-# সম্পূর্ণ CORS উন্মুক্ত রাখা যাতে ওয়েবসাইট থেকে রিকোয়েস্ট ব্লক না হয়
 CORS(app, resources={r"/*": {"origins": "*"}})
 
-# Render Environment Variable থেকে টোকেন নেওয়া
 HF_TOKEN = os.environ.get("HF_TOKEN")
 client = InferenceClient(api_key=HF_TOKEN)
 
 def translate_to_english(text):
-    """বাংলা বা অন্য যেকোনো ভাষা থেকে স্বয়ংক্রিয়ভাবে ইংরেজিতে অনুবাদ"""
+    """বাংলা থেকে ইংরেজিতে প্রম্পট অনুবাদ"""
     try:
         encoded_text = urllib.parse.quote(text)
         url = f"https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=en&dt=t&q={encoded_text}"
@@ -34,10 +32,10 @@ def translate_to_english(text):
 
 @app.route("/")
 def home():
-    return jsonify({"status": "Technography AI Image & BG Remover Engine Live on Render!"})
+    return jsonify({"status": "Technography AI Engine is Live on Render!"})
 
 # ==========================================
-# ১. এআই ইমেজ জেনারেটর এন্ডপয়েন্ট (/generate)
+# ১. এআই ইমেজ জেনারেটর (/generate)
 # ==========================================
 @app.route("/generate", methods=["POST", "OPTIONS"])
 def generate():
@@ -76,11 +74,12 @@ def generate():
         })
 
     except Exception as e:
-        print(f"Error occurred: {str(e)}")
+        print(f"Generate Error: {str(e)}")
         return jsonify({"success": False, "error": str(e)}), 500
 
 # ==========================================
-# ২. এআই ব্যাকগ্রাউন্ড রিমুভার এন্ডপয়েন্ট (/remove-bg)
+# ২. এআই ব্যাকগ্রাউন্ড রিমুভার (/remove-bg)
+# (Zero-RAM ক্লাউড ইঞ্জিন - Render ক্র্যাশ করবে না)
 # ==========================================
 @app.route("/remove-bg", methods=["POST", "OPTIONS"])
 def remove_bg():
@@ -93,23 +92,31 @@ def remove_bg():
 
         file = request.files["file"]
         if file.filename == "":
-            return jsonify({"success": False, "error": "কোনো ফাইল নির্বাচন করা হয়নি"}), 400
+            return jsonify({"success": False, "error": "ফাইল নির্বাচন করা হয়নি"}), 400
 
-        input_bytes = file.read()
+        image_bytes = file.read()
 
-        # পাইথনের rembg ইঞ্জিন দিয়ে সূক্ষ্মভাবে ব্যাকগ্রাউন্ড মুছে ফেলা
-        output_bytes = remove(input_bytes)
+        # Hugging Face-এর ক্লাউড RMBG মডেল কল করা হচ্ছে
+        api_url = "https://api-inference.huggingface.co/models/briaai/RMBG-1.4"
+        headers = {"Authorization": f"Bearer {HF_TOKEN}"} if HF_TOKEN else {}
 
-        # স্বচ্ছ PNG ছবি সরাসরি রিটার্ন
-        return send_file(
-            io.BytesIO(output_bytes),
-            mimetype="image/png",
-            as_attachment=False
-        )
+        response = requests.post(api_url, headers=headers, data=image_bytes, timeout=40)
+
+        if response.status_code == 200:
+            return send_file(
+                io.BytesIO(response.content),
+                mimetype="image/png",
+                as_attachment=False
+            )
+        else:
+            return jsonify({
+                "success": False, 
+                "error": f"AI মডেল রেসপন্স দেয়নি (কোড {response.status_code})"
+            }), 500
 
     except Exception as e:
         print(f"BG Remover Error: {str(e)}")
-        return jsonify({"success": False, "error": f"প্রসেসিং ত্রুটি: {str(e)}"}), 500
+        return jsonify({"success": False, "error": f"সার্ভার ত্রুটি: {str(e)}"}), 500
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 5000))
