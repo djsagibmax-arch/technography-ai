@@ -12,14 +12,15 @@ from rembg import remove
 from PIL import Image
 
 app = Flask(__name__)
+# সম্পূর্ণ CORS উন্মুক্ত রাখা যাতে ওয়েবসাইট থেকে রিকোয়েস্ট ব্লক না হয়
 CORS(app, resources={r"/*": {"origins": "*"}})
 
-# Render Environment Variable থেকে টোকেন
+# Render Environment Variable থেকে টোকেন নেওয়া
 HF_TOKEN = os.environ.get("HF_TOKEN")
 client = InferenceClient(api_key=HF_TOKEN)
 
 def translate_to_english(text):
-    """বাংলা, হিন্দি ইত্যাদি যেকোনো ভাষা থেকে ইংরেজিতে অনুবাদ"""
+    """বাংলা বা অন্য যেকোনো ভাষা থেকে স্বয়ংক্রিয়ভাবে ইংরেজিতে অনুবাদ"""
     try:
         encoded_text = urllib.parse.quote(text)
         url = f"https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=en&dt=t&q={encoded_text}"
@@ -36,7 +37,7 @@ def home():
     return jsonify({"status": "Technography AI Image & BG Remover Engine Live on Render!"})
 
 # ==========================================
-# ১. এআই ইমেজ জেনারেটর (পূর্বের ফ্লাক্স মডেল)
+# ১. এআই ইমেজ জেনারেটর এন্ডপয়েন্ট (/generate)
 # ==========================================
 @app.route("/generate", methods=["POST", "OPTIONS"])
 def generate():
@@ -55,13 +56,9 @@ def generate():
         if not user_prompt:
             return jsonify({"success": False, "error": "প্রম্পট খালি রাখা যাবে না"}), 400
 
-        # অনুবাদ করা
         english_prompt = translate_to_english(user_prompt)
-
-        # ছবির নিখুঁত রূপ ও ধারাবাহিকতা বজায় রাখতে প্রম্পট সাজানো
         enhanced_prompt = f"{english_prompt}, cinematic, photorealistic, sharp focus, 8k resolution"
 
-        # FLUX.1-schnell মডেলে seed পাস করে ইমেজ তৈরি
         image = client.text_to_image(
             prompt=enhanced_prompt,
             model="black-forest-labs/FLUX.1-schnell",
@@ -83,7 +80,7 @@ def generate():
         return jsonify({"success": False, "error": str(e)}), 500
 
 # ==========================================
-# ২. এআই ব্যাকগ্রাউন্ড রিমুভার (নতুন যুক্ত)
+# ২. এআই ব্যাকগ্রাউন্ড রিমুভার এন্ডপয়েন্ট (/remove-bg)
 # ==========================================
 @app.route("/remove-bg", methods=["POST", "OPTIONS"])
 def remove_bg():
@@ -100,10 +97,10 @@ def remove_bg():
 
         input_bytes = file.read()
 
-        # rembg দিয়ে ব্যাকগ্রাউন্ড মুছে ফেলা
+        # পাইথনের rembg ইঞ্জিন দিয়ে সূক্ষ্মভাবে ব্যাকগ্রাউন্ড মুছে ফেলা
         output_bytes = remove(input_bytes)
 
-        # স্বচ্ছ PNG ছবি সরাসরি রিটার্ন করা
+        # স্বচ্ছ PNG ছবি সরাসরি রিটার্ন
         return send_file(
             io.BytesIO(output_bytes),
             mimetype="image/png",
